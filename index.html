@@ -127,7 +127,7 @@ footer{text-align:center;color:var(--mut);font-size:.85rem;margin-top:18px}
     </div>
   </div>
   <div class="tools">
-    <a class="pdf" id="pdfTop" target="_blank" rel="noopener">📄 Cours complet (PDF)</a>
+    <a class="pdf" id="pdfTop" download="Cours_Acides_Bases_1ST2S.pdf" target="_blank" rel="noopener">⬇ Télécharger le cours (PDF)</a>
     <button type="button" id="fsBtn" aria-pressed="false">A+ Texte plus grand</button>
   </div>
   <div class="stripe" aria-hidden="true"></div>
@@ -138,6 +138,7 @@ footer{text-align:center;color:var(--mut);font-size:.85rem;margin-top:18px}
   <h2>Ta mission</h2>
   <p>Tu commences ton stage à l’hôpital <b>Saint-Brönsted</b>. Le responsable sécurité te confie une ronde dans <b>4 salles</b> : la réserve, les urgences, le laboratoire d’analyses et le local des déchets. Dans chaque salle, une situation réelle t’attend avec <b>6 questions</b>.</p>
   <p>Chaque réponse est <b>définitive</b>. Il faut au moins <b>5 bonnes réponses sur 6</b> pour obtenir le badge de la salle et ouvrir la suivante. Sinon, tu recommences : les questions ratées reviennent en priorité, avec de nouvelles questions. Prends ton temps : il n’y a pas de chronomètre.</p>
+  <p class="mut" style="font-size:.9rem">ℹ️ Ton professeur reçoit avec ton bilan un résumé de ton activité : nombre de sorties de la page, copier-coller et temps de réponse.</p>
   <div class="badge-card">
     <div class="photo" aria-hidden="true">🧑‍⚕️</div>
     <div>
@@ -194,7 +195,7 @@ footer{text-align:center;color:var(--mut);font-size:.85rem;margin-top:18px}
 <dialog id="cours" aria-labelledby="coursT">
   <div class="dhead"><h2 id="coursT">Rappel de cours</h2><button class="btn" type="button" id="coursX">✕ Fermer</button></div>
   <div class="dbody" id="coursB"></div>
-  <div class="dfoot"><a class="btn" id="pdfDlg" target="_blank" rel="noopener" style="text-decoration:none">📄 Ouvrir le cours complet (PDF)</a>
+  <div class="dfoot"><a class="btn" id="pdfDlg" download="Cours_Acides_Bases_1ST2S.pdf" target="_blank" rel="noopener" style="text-decoration:none">⬇ Télécharger le cours complet (PDF)</a>
   <button class="btn p" type="button" id="coursX2">J’ai compris, je retourne à la salle</button></div>
 </dialog>
 
@@ -246,6 +247,31 @@ let cur = null; // { i, qs, k, an }
 function show(id) { ["scrStart", "scrMap", "scrQuiz", "scrRes", "scrEnd"].forEach(x => $("#" + x).classList.toggle("hidden", x !== id)); window.scrollTo(0, 0); }
 
 $("#pdfTop").href = COURS_PDF; $("#pdfDlg").href = COURS_PDF;
+
+/* ---------- suivi de l’activité de l’élève (envoyé au professeur avec le bilan) ----------
+   sorties : nb de fois où l’élève a quitté la page pendant le jeu · tempsHors : durée totale hors de la page
+   copies : nb de copier/couper · tempsMedian : temps médian de réponse (s) · rapides : réponses en moins de 3 s
+   apresSortie : réponses données juste après être sorti de la page · reponses : nb total de réponses */
+S.act = S.act || { sorties: 0, horsMs: 0, copies: 0, durees: [], rapides: 0, apresSortie: 0, reponses: 0 };
+let horsDepuis = 0, sortieQuestion = false, ignorerSortie = false, qDebut = 0;
+const enJeu = () => !$("#scrQuiz").classList.contains("hidden");
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    if (ignorerSortie) { ignorerSortie = false; return; }     // ouverture du cours PDF : non comptée
+    if (!S.eleve) return;
+    S.act.sorties++; horsDepuis = Date.now(); if (enJeu()) sortieQuestion = true; save();
+  } else if (horsDepuis) { S.act.horsMs += Date.now() - horsDepuis; horsDepuis = 0; save(); }
+});
+["copy", "cut"].forEach(ev => document.addEventListener(ev, () => { if (S.eleve) { S.act.copies++; save(); } }));
+[$("#pdfTop"), $("#pdfDlg")].forEach(a => a.addEventListener("click", () => { ignorerSortie = true; setTimeout(() => ignorerSortie = false, 4000); }));
+function duree(ms) { const t = Math.round(ms / 1000), m = Math.floor(t / 60); return m ? `${m} min ${String(t % 60).padStart(2, "0")} s` : `${t} s`; }
+function activite() {
+  const d = [...S.act.durees].sort((a, b) => a - b), n = d.length;
+  const med = n ? (n % 2 ? d[(n - 1) / 2] : (d[n / 2 - 1] + d[n / 2]) / 2) : 0;
+  return { sorties: S.act.sorties, tempsHors: duree(S.act.horsMs), copies: S.act.copies,
+           tempsMedian: (med / 1000).toFixed(1).replace(".", ","), rapides: S.act.rapides,
+           apresSortie: S.act.apresSortie, reponses: S.act.reponses };
+}
 
 /* ---------- taille du texte ---------- */
 let big = store.get(KEY + "-fs", false);
@@ -302,6 +328,7 @@ function startEntr() {
   renderQ();
 }
 function renderQ() {
+  qDebut = Date.now(); sortieQuestion = false;
   const q = cur.qs[cur.k], s = SALLES[q.si];
   $("#qRoom").textContent = cur.entr ? `🎯 Entraînement · ${s.icone} ${s.titre.split(" · ")[1]}` : s.icone + " " + s.titre;
   $("#qNum").textContent = `Question ${cur.k + 1} / ${cur.qs.length}`;
@@ -321,6 +348,10 @@ function answer(j) {
   cur.an[cur.k] = ok;
   const h = S.hist[q.key] || (S.hist[q.key] = { vu: 0, rate: false, last: 0 });
   h.vu++; h.rate = !ok; h.last = S.tour;
+  const dt = Date.now() - qDebut; S.act.reponses++; S.act.durees.push(dt);
+  if (S.act.durees.length > 400) S.act.durees.shift();
+  if (dt < 3000) S.act.rapides++;
+  if (sortieQuestion) S.act.apresSortie++;
   if (!cur.entr) { const st = S.stats[cur.i]; st.total++; if (ok) st.justes++; }
   save();
   $("#qBox").querySelectorAll(".opt").forEach((b, x) => { b.disabled = true; if (x === q.good) b.classList.add("ok"); if (x === j && !ok) b.classList.add("ko"); });
@@ -401,7 +432,8 @@ function renderEnd() {
 function texteBilan() {
   const e = S.eleve, b = bilan();
   return `Bonjour,\n\nÉlève : ${qui()}\nClasse : ${e.classe}\nJeu : ${JEU}\n\nRéponses justes (toutes tentatives, réponses verrouillées) : ${b.O}/${b.T} = ${b.pc} %\nBadges obtenus : ${S.passed.filter(Boolean).length}/${SALLES.length}\n\n` +
-    SALLES.map((s, i) => `${s.titre} : ${S.stats[i].essais} tentative(s), meilleur score ${S.stats[i].meilleur}/${NB_Q}, ${S.stats[i].total ? Math.round(100 * S.stats[i].justes / S.stats[i].total) : 0} % de réponses justes`).join("\n") + "\n";
+    SALLES.map((s, i) => `${s.titre} : ${S.stats[i].essais} tentative(s), meilleur score ${S.stats[i].meilleur}/${NB_Q}, ${S.stats[i].total ? Math.round(100 * S.stats[i].justes / S.stats[i].total) : 0} % de réponses justes`).join("\n") + "\n" +
+    (a => `\nActivité : sorties de page ${a.sorties} (${a.tempsHors} hors de la page) · copies ${a.copies} · temps médian ${a.tempsMedian} s/question · réponses < 3 s : ${a.rapides}/${a.reponses} · réponses après une sortie : ${a.apresSortie}/${a.reponses}\n`)(activite());
 }
 function mailFallback(msg) {
   const e = S.eleve, b = bilan(), sub = `Bilan Alerte au labo : ${qui()} (${e.classe}) : ${b.pc} %`, body = texteBilan();
@@ -418,6 +450,7 @@ $("#sendBtn").onclick = async () => {
     pct: b.pc, ok: b.O, tot: b.T,
     missions: SALLES.map((s, i) => ({ a: S.stats[i].essais, best: S.stats[i].meilleur, n: NB_Q,
                                       pct: S.stats[i].total ? Math.round(100 * S.stats[i].justes / S.stats[i].total) : 0 })),
+    activite: activite(),
     test: TEST
   };
   $("#sendBtn").disabled = true; $("#sendMsg").textContent = "Envoi en cours…";
