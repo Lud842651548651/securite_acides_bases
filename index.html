@@ -184,7 +184,7 @@ footer{text-align:center;color:var(--mut);font-size:.85rem;margin-top:18px}
 <!-- Écran 5 : bilan -->
 <section class="card hidden" id="scrEnd">
   <h2>🏥 Ronde terminée : envoie ton bilan</h2>
-  <p>Bravo, tu as obtenu les 4 badges de sécurité ! Clique sur le bouton pour envoyer ton résultat à ton professeur.</p>
+  <p>Bravo, tu as obtenu les 4 badges de sécurité ! Ton résultat est envoyé à ton professeur.</p>
   <p><b>Ton résultat :</b> <span id="endScore"></span></p>
   <div class="actions"><button class="btn p" id="sendBtn" type="button">📨 Envoyer mon bilan</button>
   <button class="btn" id="endEntr" type="button">🎯 Nouvel entraînement</button><button class="btn" id="endMap" type="button">Retour au plan</button></div>
@@ -307,7 +307,7 @@ function renderMap() {
   const canEnd = nb === SALLES.length || (TEST && S.stats.some(x => x.total));
   $("#mapActions").innerHTML = (canEnd ? `<button class="btn r" type="button" id="toEnd">📨 Envoyer ${TEST ? "un bilan de test" : "mon bilan"}</button>` : "")
     + (nb === SALLES.length || TEST ? `<button class="btn p" type="button" id="toEntr">🎯 Nouvel entraînement</button>` : "");
-  if (canEnd) $("#toEnd").onclick = renderEnd;
+  if (canEnd) $("#toEnd").onclick = () => renderEnd(true);
   if ($("#toEntr")) $("#toEntr").onclick = startEntr;
   show("scrMap");
 }
@@ -376,7 +376,7 @@ function endEntr() {
     ${allDone ? `<button class="btn r" id="rEnd" type="button">📨 Envoyer mon bilan</button>` : ""}<button class="btn" id="rMap" type="button">Retour au plan</button></div>`;
   show("scrRes");
   $("#rMap").onclick = renderMap; $("#rEntr").onclick = startEntr;
-  if ($("#rEnd")) $("#rEnd").onclick = renderEnd;
+  if ($("#rEnd")) $("#rEnd").onclick = () => renderEnd(true);
 }
 function endRoom() {
   if (cur.entr) return endEntr();
@@ -394,7 +394,7 @@ function endRoom() {
   show("scrRes");
   $("#rMap").onclick = renderMap;
   if ($("#rRetry")) $("#rRetry").onclick = () => startRoom(i);
-  if ($("#rEnd")) $("#rEnd").onclick = renderEnd;
+  if ($("#rEnd")) $("#rEnd").onclick = () => renderEnd(true);
   if ($("#rEntr")) $("#rEntr").onclick = startEntr;
 }
 
@@ -423,12 +423,18 @@ function bilan() {
   const T = S.stats.reduce((a, x) => a + x.total, 0), O = S.stats.reduce((a, x) => a + x.justes, 0), pc = T ? Math.round(100 * O / T) : 0;
   return { T, O, pc };
 }
-function renderEnd() {
+/* Un seul clic : les boutons « Envoyer mon bilan » du plan et des résultats ouvrent l’écran du bilan ET envoient. */
+const signature = () => JSON.stringify([bilan(), S.stats.map(x => x.essais)]);
+function renderEnd(auto) {
   const b = bilan();
   $("#endScore").textContent = `${b.O} réponses justes sur ${b.T} (${b.pc} %)`;
   $("#sendMsg").textContent = ""; $("#sendTxt").classList.add("hidden");
+  majBoutonEnvoi();
   show("scrEnd");
+  if (auto && S.envoi !== signature()) envoyer();
+  else if (S.envoi === signature()) $("#sendMsg").innerHTML = "✅ <b>Ton bilan a déjà été envoyé à ton professeur.</b>";
 }
+function majBoutonEnvoi() { $("#sendBtn").textContent = S.envoi ? "📨 Renvoyer mon bilan" : "📨 Envoyer mon bilan"; }
 function texteBilan() {
   const e = S.eleve, b = bilan();
   return `Bonjour,\n\nÉlève : ${qui()}\nClasse : ${e.classe}\nJeu : ${JEU}\n\nRéponses justes (toutes tentatives, réponses verrouillées) : ${b.O}/${b.T} = ${b.pc} %\nBadges obtenus : ${S.passed.filter(Boolean).length}/${SALLES.length}\n\n` +
@@ -441,7 +447,10 @@ function mailFallback(msg) {
   $("#sendMsg").innerHTML = (msg ? msg + " " : "") + `Ton application mail va s’ouvrir avec le message prêt : appuie sur « Envoyer ». Sinon, copie le texte ci-dessous et envoie-le à <b>${PROF_MAIL}</b>.`;
   window.open(`mailto:${PROF_MAIL}?subject=${encodeURIComponent(sub)}&body=${encodeURIComponent(body)}`, "_blank");
 }
-$("#sendBtn").onclick = async () => {
+let envoiEnCours = false;
+$("#sendBtn").onclick = () => envoyer();
+async function envoyer() {
+  if (envoiEnCours) return;
   const e = S.eleve, b = bilan();
   if (!WORKER_URL || WORKER_URL.startsWith("__")) { mailFallback(); return; }
   // Format « Mission Pôle Nord » reconnu par le worker : pct, ok, tot + missions[] (M1 à M4 = salles 1 à 4)
@@ -453,18 +462,20 @@ $("#sendBtn").onclick = async () => {
     activite: activite(),
     test: TEST
   };
-  $("#sendBtn").disabled = true; $("#sendMsg").textContent = "Envoi en cours…";
+  envoiEnCours = true; $("#sendBtn").disabled = true; $("#sendMsg").textContent = "⏳ Envoi de ton bilan en cours…";
   try {
     // text/plain : accepté par le worker et évite la requête préalable CORS
     const r = await fetch(WORKER_URL, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify(payload) });
     if (!r.ok) throw new Error("HTTP " + r.status + " : " + await r.text());
-    $("#sendMsg").innerHTML = "✅ <b>Bilan envoyé à ton professeur.</b> Tu peux fermer la page.";
+    S.envoi = signature(); save(); majBoutonEnvoi();
+    $("#sendMsg").innerHTML = "✅ <b>Bilan envoyé à ton professeur.</b> Tu peux continuer à t’entraîner ou fermer la page.";
   } catch (err) {
     console.error("[ALERTE LABO] Envoi au worker impossible :", err);
-    $("#sendBtn").disabled = false;
     mailFallback("⚠️ L’envoi automatique n’a pas fonctionné.");
+  } finally {
+    envoiEnCours = false; $("#sendBtn").disabled = false;
   }
-};
+}
 
 $("#endEntr").onclick = startEntr; $("#endMap").onclick = renderMap;
 
